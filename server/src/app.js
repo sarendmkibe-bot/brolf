@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import pool from './config/db.js';
 
 const app = express();
 
@@ -14,6 +15,16 @@ app.get('/api/health', (req, res) => {
     service: 'markethub-api',
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get('/api/health/db', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW() AS now');
+    res.json({ status: 'ok', database: 'connected', time: result.rows[0].now });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', database: 'unreachable' });
+  }
 });
 
 // Unknown routes
