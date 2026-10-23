@@ -5,6 +5,8 @@ import pool from './config/db.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import categoryRoutes from './modules/categories/categories.routes.js';
 import productRoutes from './modules/products/products.routes.js';
+import orderRoutes from './modules/orders/orders.routes.js';
+import adminRoutes from './modules/admin/admin.routes.js';
 
 const app = express();
 
@@ -14,6 +16,8 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({
