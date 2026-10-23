@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import pool from './config/db.js';
 import authRoutes from './modules/auth/auth.routes.js';
+import categoryRoutes from './modules/categories/categories.routes.js';
+import productRoutes from './modules/products/products.routes.js';
 
 const app = express();
 
@@ -10,6 +12,8 @@ app.use(helmet());
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json());
 app.use('/api/auth', authRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/products', productRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({
