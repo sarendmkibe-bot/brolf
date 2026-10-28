@@ -1,8 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext.jsx';
+import { useCart } from '../CartContext.jsx';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
+  const { count } = useCart();
+  const isBuyer = !user || user.role === 'customer';
 
   return (
     <header className="sticky top-0 z-10 border-b border-line bg-ink/90 backdrop-blur">
@@ -15,6 +18,18 @@ export default function Navbar() {
           <Link to="/" className="text-muted hover:text-fg">
             Shop
           </Link>
+
+          {isBuyer && (
+            <Link to="/cart" className="text-muted hover:text-fg">
+              Cart{count > 0 && <span className="ml-1 rounded-full bg-brand px-2 py-0.5 text-xs font-bold text-ink">{count}</span>}
+            </Link>
+          )}
+
+          {user?.role === 'customer' && (
+            <Link to="/orders" className="text-muted hover:text-fg">
+              My orders
+            </Link>
+          )}
 
           {user ? (
             <>

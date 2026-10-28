@@ -1,8 +1,13 @@
+import { Link } from 'react-router-dom';
+
 export default function ProductCard({ product }) {
   const outOfStock = product.stock === 0;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-panel transition hover:border-brand/50">
+    <Link
+      to={`/products/${product.id}`}
+      className="block overflow-hidden rounded-xl border border-line bg-panel transition hover:border-brand/50"
+    >
       {product.image_url ? (
         <img src={product.image_url} alt={product.name} className="h-40 w-full object-cover" />
       ) : (
@@ -25,6 +30,6 @@ export default function ProductCard({ product }) {
           </span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
