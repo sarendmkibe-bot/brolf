@@ -237,3 +237,13 @@ test('the sales report is admin only', async () => {
   assert.equal(ok.body.totals.orders, 1); // the cancelled order is not counted
   assert.equal(ok.body.totals.revenue, 1700);
 });
+test('a disabled account is locked out immediately', async () => {
+  const off = await request(app)
+    .patch(`/api/admin/users/${otherSeller.id}`)
+    .set(auth(admin))
+    .send({ is_active: false });
+  assert.equal(off.status, 200);
+
+  const res = await request(app).get('/api/auth/me').set(auth(otherSeller));
+  assert.equal(res.status, 401);
+});
