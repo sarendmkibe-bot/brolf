@@ -8,6 +8,8 @@ import ProductDetail from './pages/ProductDetail.jsx';
 import Cart from './pages/Cart.jsx';
 import Checkout from './pages/Checkout.jsx';
 import Orders from './pages/Orders.jsx';
+import SellerDashboard from './pages/seller/SellerDashboard.jsx';
+import AdminDashboard from './pages/admin/AdminDashboard.jsx';
 
 export default function App() {
   return (
@@ -33,6 +35,22 @@ export default function App() {
             element={
               <RequireRole roles={['customer']}>
                 <Orders />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/seller"
+            element={
+              <RequireRole roles={['seller']}>
+                <SellerDashboard />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <RequireRole roles={['admin']}>
+                <AdminDashboard />
               </RequireRole>
             }
           />

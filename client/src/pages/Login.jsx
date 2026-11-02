@@ -17,8 +17,8 @@ export default function Login() {
     setBusy(true);
     setError('');
     try {
-      await login(email, password);
-           navigate(location.state?.from || '/');
+          const user = await login(email, password);
+           navigate(location.state?.from || { seller: '/seller', admin: '/admin' }[user.role] || '/');
     } catch (err) {
       setError(errorText(err));
     } finally {

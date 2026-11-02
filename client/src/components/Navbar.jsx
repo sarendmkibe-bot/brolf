@@ -28,6 +28,11 @@ export default function Navbar() {
           {user?.role === 'customer' && (
             <Link to="/orders" className="text-muted hover:text-fg">
               My orders
+                        {user?.role === 'seller' && (
+            <Link to="/seller" className="text-muted hover:text-fg">
+              Seller dashboard
+            </Link>
+          )}
             </Link>
           )}
 

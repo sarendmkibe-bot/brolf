@@ -17,8 +17,8 @@ export default function Register() {
     setBusy(true);
     setError('');
     try {
-      await register(form);
-      navigate('/');
+           const user = await register(form);
+      navigate(user.role === 'seller' ? '/seller' : '/');
     } catch (err) {
       setError(errorText(err));
     } finally {
