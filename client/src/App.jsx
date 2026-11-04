@@ -8,6 +8,7 @@ import ProductDetail from './pages/ProductDetail.jsx';
 import Cart from './pages/Cart.jsx';
 import Checkout from './pages/Checkout.jsx';
 import Orders from './pages/Orders.jsx';
+import PaymentReturn from './pages/PaymentReturn.jsx';
 import SellerDashboard from './pages/seller/SellerDashboard.jsx';
 import AdminDashboard from './pages/admin/AdminDashboard.jsx';
 
@@ -35,6 +36,14 @@ export default function App() {
             element={
               <RequireRole roles={['customer']}>
                 <Orders />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/payment/return"
+            element={
+              <RequireRole roles={['customer']}>
+                <PaymentReturn />
               </RequireRole>
             }
           />

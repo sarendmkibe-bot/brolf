@@ -1,4 +1,5 @@
 const STYLES = {
+  awaiting_payment: 'bg-orange-500/15 text-orange-300',
   pending: 'bg-yellow-500/15 text-yellow-300',
   confirmed: 'bg-blue-500/15 text-blue-300',
   shipped: 'bg-purple-500/15 text-purple-300',
@@ -9,7 +10,7 @@ const STYLES = {
 export default function StatusBadge({ status }) {
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${STYLES[status] || ''}`}>
-      {status}
+      {status.replace('_', ' ')}
     </span>
   );
 }

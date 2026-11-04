@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorText } from '../api.js';
 import { useCart } from '../CartContext.jsx';
@@ -8,6 +8,13 @@ export default function Checkout() {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [mode, setMode] = useState('simulated');
+
+  useEffect(() => {
+    api('/config')
+      .then((d) => setMode(d.paymentMode))
+      .catch(() => {});
+  }, []);
 
   if (items.length === 0) {
     return (
@@ -23,17 +30,25 @@ export default function Checkout() {
   async function placeOrder() {
     setBusy(true);
     setError('');
+    let leaving = false;
     try {
-      await api('/orders', {
+      const data = await api('/orders', {
         method: 'POST',
         body: { items: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })) },
       });
       clear();
+
+      if (data.payment?.checkout_url) {
+        // Real payment: the customer pays on the provider's own page
+        leaving = true;
+        window.location.href = data.payment.checkout_url;
+        return;
+      }
       navigate('/orders', { state: { placed: true } });
     } catch (err) {
       setError(errorText(err));
     } finally {
-      setBusy(false);
+      if (!leaving) setBusy(false);
     }
   }
 
@@ -56,10 +71,17 @@ export default function Checkout() {
         </div>
       </div>
 
-      <div className="mt-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-200">
-        Demo payment: this order is recorded with a simulated payment. No money is taken and no
-        card details are collected.
-      </div>
+      {mode === 'chapa' ? (
+        <div className="mt-4 rounded-xl border border-brand/30 bg-brand/10 p-4 text-sm text-brand">
+          You will be taken to Chapa's secure payment page. MarketHub never sees or stores your card
+          or mobile-money details. Your items are held for 30 minutes while you pay.
+        </div>
+      ) : (
+        <div className="mt-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-200">
+          Demo payment: this order is recorded with a simulated payment. No money is taken and no
+          card details are collected.
+        </div>
+      )}
 
       {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
 
@@ -68,7 +90,7 @@ export default function Checkout() {
         disabled={busy}
         className="mt-6 w-full rounded-lg bg-brand py-3 font-semibold text-ink hover:bg-brand-dark disabled:opacity-60"
       >
-        {busy ? 'Placing order...' : 'Place order'}
+        {busy ? 'Please wait...' : mode === 'chapa' ? 'Pay with Chapa' : 'Place order'}
       </button>
     </div>
   );

@@ -3,6 +3,8 @@ import { api, errorText } from '../../api.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 
 const ACTIONS = {
+  awaiting_payment: [
+    { status: 'cancelled', label: 'Cancel', danger: true }],
   pending: [
     { status: 'confirmed', label: 'Confirm' },
     { status: 'cancelled', label: 'Cancel', danger: true },
