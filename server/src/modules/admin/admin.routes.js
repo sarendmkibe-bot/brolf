@@ -64,13 +64,13 @@ router.get('/orders', async (req, res, next) => {
   }
 });
 
-// Basic sales report (cancelled orders are not counted as sales)
+// Basic sales report (cancelled and unpaid orders are not counted as sales)
 router.get('/reports/sales', async (req, res, next) => {
   try {
     const [totals, byStatus, topProducts] = await Promise.all([
       pool.query(
         `SELECT COUNT(*)::int AS orders, COALESCE(SUM(total), 0)::float8 AS revenue
-         FROM orders WHERE status <> 'cancelled'`
+         FROM orders WHERE status NOT IN ('cancelled', 'awaiting_payment')`
       ),
       pool.query('SELECT status, COUNT(*)::int AS count FROM orders GROUP BY status ORDER BY status'),
       pool.query(
@@ -80,7 +80,7 @@ router.get('/reports/sales', async (req, res, next) => {
          FROM order_items oi
          JOIN orders o ON o.id = oi.order_id
          JOIN products p ON p.id = oi.product_id
-         WHERE o.status <> 'cancelled'
+         WHERE o.status NOT IN ('cancelled', 'awaiting_payment')
          GROUP BY p.id, p.name
          ORDER BY units_sold DESC
          LIMIT 5`

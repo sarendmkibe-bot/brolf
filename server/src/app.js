@@ -7,6 +7,7 @@ import categoryRoutes from './modules/categories/categories.routes.js';
 import productRoutes from './modules/products/products.routes.js';
 import orderRoutes from './modules/orders/orders.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
+  import paymentRoutes from './modules/payments/payments.routes.js';
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
+  app.use('/api/payments', paymentRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({

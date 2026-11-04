@@ -5,9 +5,12 @@ import request from 'supertest';
 
 // Tests use their own database so your real data is never touched
 process.env.DB_NAME = 'markethub_test';
+// Tests always run with simulated payments, whatever your .env says
+process.env.PAYMENT_MODE = 'simulated';
 
 const { default: app } = await import('../src/app.js');
 const { default: pool } = await import('../src/config/db.js');
+const { expireUnpaidOrders } = await import('../src/modules/payments/service.js');
 
 const PASSWORD = 'Password123';
 const auth = (user) => ({ Authorization: `Bearer ${user.token}` });
@@ -237,6 +240,7 @@ test('the sales report is admin only', async () => {
   assert.equal(ok.body.totals.orders, 1); // the cancelled order is not counted
   assert.equal(ok.body.totals.revenue, 1700);
 });
+
 test('a disabled account is locked out immediately', async () => {
   const off = await request(app)
     .patch(`/api/admin/users/${otherSeller.id}`)
@@ -246,4 +250,100 @@ test('a disabled account is locked out immediately', async () => {
 
   const res = await request(app).get('/api/auth/me').set(auth(otherSeller));
   assert.equal(res.status, 401);
+});
+
+// ---------- Real payments (Chapa is mocked, no network) ----------
+
+function mockChapa(verifyStatus = 'success') {
+  const realFetch = globalThis.fetch;
+  process.env.PAYMENT_MODE = 'chapa';
+  process.env.CHAPA_SECRET_KEY = 'test-key';
+  let amount = 0;
+
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const json = (body) => new Response(JSON.stringify(body), { status: 200 });
+    if (u.endsWith('/transaction/initialize')) {
+      amount = JSON.parse(options.body).amount;
+      return json({
+        status: 'success',
+        message: 'ok',
+        data: { checkout_url: 'https://checkout.chapa.co/test-link' },
+      });
+    }
+    if (u.includes('/transaction/verify/')) {
+      return json({
+        status: 'success',
+        message: 'ok',
+        data: { status: verifyStatus, amount, currency: 'ETB' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${u}`);
+  };
+
+  return () => {
+    globalThis.fetch = realFetch;
+    process.env.PAYMENT_MODE = 'simulated';
+  };
+}
+
+test('with real payments on, an order waits for payment until it is verified', async () => {
+  const restore = mockChapa('success');
+  try {
+    const before = await stockOf();
+    const placed = await request(app)
+      .post('/api/orders')
+      .set(auth(customer))
+      .send({ items: [{ product_id: productId, quantity: 1 }] });
+    assert.equal(placed.status, 201);
+    assert.equal(placed.body.order.status, 'awaiting_payment');
+    assert.equal(placed.body.payment.method, 'chapa');
+    assert.ok(placed.body.payment.checkout_url);
+    assert.equal(await stockOf(), before - 1);
+
+    // sellers do not see unpaid orders
+    const sellerView = await request(app).get('/api/orders/seller').set(auth(seller));
+    assert.ok(!sellerView.body.orders.some((o) => o.id === placed.body.order.id));
+
+    const verified = await request(app)
+      .post('/api/payments/verify')
+      .set(auth(customer))
+      .send({ tx_ref: placed.body.payment.tx_ref });
+    assert.equal(verified.status, 200);
+    assert.equal(verified.body.status, 'paid');
+
+    const history = await request(app).get('/api/orders').set(auth(customer));
+    const mine = history.body.orders.find((o) => o.id === placed.body.order.id);
+    assert.equal(mine.status, 'pending');
+    assert.equal(mine.payment.status, 'paid');
+  } finally {
+    restore();
+  }
+});
+
+test('an unpaid order expires and its stock is returned', async () => {
+  const restore = mockChapa('pending');
+  try {
+    const before = await stockOf();
+    const placed = await request(app)
+      .post('/api/orders')
+      .set(auth(customer))
+      .send({ items: [{ product_id: productId, quantity: 2 }] });
+    assert.equal(placed.status, 201);
+    assert.equal(await stockOf(), before - 2);
+
+    await pool.query("UPDATE orders SET created_at = NOW() - INTERVAL '2 hours' WHERE id = $1", [
+      placed.body.order.id,
+    ]);
+    const cancelled = await expireUnpaidOrders(30);
+    assert.equal(cancelled, 1);
+    assert.equal(await stockOf(), before);
+
+    const history = await request(app).get('/api/orders').set(auth(customer));
+    const mine = history.body.orders.find((o) => o.id === placed.body.order.id);
+    assert.equal(mine.status, 'cancelled');
+    assert.equal(mine.payment.status, 'expired');
+  } finally {
+    restore();
+  }
 });

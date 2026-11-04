@@ -59,3 +59,12 @@ CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_seller ON order_items(seller_id);
+-- Real payments (Chapa)
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS tx_ref VARCHAR(100);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS checkout_url TEXT;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_tx_ref ON payments(tx_ref) WHERE tx_ref IS NOT NULL;
+
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
+ALTER TABLE orders ADD CONSTRAINT orders_status_check
+  CHECK (status IN ('awaiting_payment', 'pending', 'confirmed', 'shipped', 'delivered', 'cancelled'));

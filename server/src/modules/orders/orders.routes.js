@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import pool from '../../config/db.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
+import { paymentMode, newTxRef, initializePayment } from '../payments/chapa.js';
+import { cancelAwaitingOrder } from '../payments/service.js';
 
 const router = Router();
 
@@ -32,6 +34,7 @@ const statusSchema = z.object({
 
 // Which status changes are allowed
 const transitions = {
+  awaiting_payment: ['cancelled'],
   pending: ['confirmed', 'cancelled'],
   confirmed: ['shipped', 'cancelled'],
   shipped: ['delivered'],
@@ -46,8 +49,13 @@ const ITEMS_JSON = `json_agg(json_build_object(
   'unit_price', oi.unit_price::float8
 ) ORDER BY oi.id) AS items`;
 
-// Customer: place an order. Everything happens in one transaction,
-// so stock can never go negative and a failed order leaves no partial data.
+const PAYMENT_JSON = `(SELECT json_build_object(
+    'status', pay.status, 'method', pay.method,
+    'tx_ref', pay.tx_ref, 'checkout_url', pay.checkout_url)
+  FROM payments pay WHERE pay.order_id = o.id ORDER BY pay.id DESC LIMIT 1) AS payment`;
+
+// Customer: place an order. Stock is checked and reserved in one transaction,
+// so it can never go negative and a failed order leaves no partial data.
 router.post('/', requireAuth, requireRole('customer'), async (req, res, next) => {
   const parsed = createOrderSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -63,6 +71,11 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
     wanted.set(item.product_id, (wanted.get(item.product_id) || 0) + item.quantity);
   }
   const ids = [...wanted.keys()].sort((a, b) => a - b);
+
+  const mode = paymentMode();
+  const txRef = mode === 'chapa' ? newTxRef() : null;
+  let order;
+  let total;
 
   const client = await pool.connect();
   try {
@@ -89,15 +102,15 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
       }
       totalCents += Math.round(Number(product.price) * 100) * qty;
     }
-    const total = totalCents / 100;
+    total = totalCents / 100;
 
     const orderResult = await client.query(
-      `INSERT INTO orders (customer_id, total)
-       VALUES ($1, $2)
+      `INSERT INTO orders (customer_id, total, status)
+       VALUES ($1, $2, $3)
        RETURNING id, status, created_at`,
-      [req.user.id, total]
+      [req.user.id, total, mode === 'chapa' ? 'awaiting_payment' : 'pending']
     );
-    const order = orderResult.rows[0];
+    order = orderResult.rows[0];
 
     for (const product of found.rows) {
       const qty = wanted.get(product.id);
@@ -109,26 +122,54 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
       await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [qty, product.id]);
     }
 
-    // Simulated payment record: no real money, no card data
+    // No card or mobile-money details are ever stored, only a reference
     await client.query(
-      `INSERT INTO payments (order_id, amount, method, status)
-       VALUES ($1, $2, 'simulated', 'simulated')`,
-      [order.id, total]
+      `INSERT INTO payments (order_id, amount, method, status, tx_ref)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [order.id, total, mode, mode === 'chapa' ? 'pending' : 'simulated', txRef]
     );
 
     await client.query('COMMIT');
-    res.status(201).json({
-      order: { id: order.id, status: order.status, total, created_at: order.created_at },
-      payment: { method: 'simulated', status: 'simulated' },
-    });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err instanceof HttpError) {
       return res.status(err.status).json({ error: err.message });
     }
-    next(err);
+    return next(err);
   } finally {
     client.release();
+  }
+
+  const orderJson = { id: order.id, status: order.status, total, created_at: order.created_at };
+
+  if (mode === 'simulated') {
+    return res
+      .status(201)
+      .json({ order: orderJson, payment: { method: 'simulated', status: 'simulated' } });
+  }
+
+  // Real payments: start the transaction with Chapa and hand back the payment page
+  try {
+    const buyer = (
+      await pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id])
+    ).rows[0];
+    const checkoutUrl = await initializePayment({
+      txRef,
+      amount: total,
+      email: buyer.email,
+      name: buyer.name,
+      orderId: order.id,
+    });
+    await pool.query('UPDATE payments SET checkout_url = $1 WHERE tx_ref = $2', [checkoutUrl, txRef]);
+
+    res.status(201).json({
+      order: orderJson,
+      payment: { method: 'chapa', status: 'pending', tx_ref: txRef, checkout_url: checkoutUrl },
+    });
+  } catch (err) {
+    console.error(err);
+    await cancelAwaitingOrder(order.id, 'failed').catch(console.error);
+    res.status(502).json({ error: 'The payment provider is unavailable. Please try again.' });
   }
 });
 
@@ -136,7 +177,7 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
 router.get('/', requireAuth, requireRole('customer'), async (req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT o.id, o.status, o.total::float8 AS total, o.created_at, ${ITEMS_JSON}
+      `SELECT o.id, o.status, o.total::float8 AS total, o.created_at, ${ITEMS_JSON}, ${PAYMENT_JSON}
        FROM orders o
        JOIN order_items oi ON oi.order_id = o.id
        JOIN products p ON p.id = oi.product_id
@@ -151,7 +192,7 @@ router.get('/', requireAuth, requireRole('customer'), async (req, res, next) => 
   }
 });
 
-// Seller: orders that include my products (only my items are shown)
+// Seller: paid orders that include my products (only my items are shown)
 router.get('/seller', requireAuth, requireRole('seller'), async (req, res, next) => {
   try {
     const result = await pool.query(
@@ -161,7 +202,7 @@ router.get('/seller', requireAuth, requireRole('seller'), async (req, res, next)
        JOIN order_items oi ON oi.order_id = o.id
        JOIN products p ON p.id = oi.product_id
        JOIN users u ON u.id = o.customer_id
-       WHERE oi.seller_id = $1
+       WHERE oi.seller_id = $1 AND o.status <> 'awaiting_payment'
        GROUP BY o.id, u.name
        ORDER BY o.created_at DESC`,
       [req.user.id]
@@ -173,7 +214,7 @@ router.get('/seller', requireAuth, requireRole('seller'), async (req, res, next)
 });
 
 // Update order status.
-// Customers can only cancel their own pending orders; sellers can update orders
+// Customers can only cancel their own unpaid orders; sellers can update orders
 // that contain their products; admins can update any order.
 router.patch('/:id/status', requireAuth, async (req, res, next) => {
   const id = idSchema.safeParse(req.params.id);
@@ -201,13 +242,19 @@ router.patch('/:id/status', requireAuth, async (req, res, next) => {
     if (role === 'customer') {
       if (order.customer_id !== userId) throw new HttpError(404, 'Order not found');
       if (newStatus !== 'cancelled') throw new HttpError(403, 'Customers can only cancel orders');
-      if (order.status !== 'pending') throw new HttpError(409, 'Only pending orders can be cancelled');
+      // With real money a paid order is cancelled by the seller or admin, who also handle the refund
+      const cancellable = paymentMode() === 'chapa' ? ['awaiting_payment'] : ['pending'];
+      if (!cancellable.includes(order.status)) {
+        throw new HttpError(409, 'This order can no longer be cancelled');
+      }
     } else if (role === 'seller') {
       const mine = await client.query(
         'SELECT 1 FROM order_items WHERE order_id = $1 AND seller_id = $2 LIMIT 1',
         [order.id, userId]
       );
-      if (!mine.rows[0]) throw new HttpError(404, 'Order not found');
+      if (!mine.rows[0] || order.status === 'awaiting_payment') {
+        throw new HttpError(404, 'Order not found');
+      }
     }
 
     if (!transitions[order.status].includes(newStatus)) {
@@ -216,13 +263,22 @@ router.patch('/:id/status', requireAuth, async (req, res, next) => {
 
     await client.query('UPDATE orders SET status = $1 WHERE id = $2', [newStatus, order.id]);
 
-    // A cancelled order puts its items back in stock
     if (newStatus === 'cancelled') {
+      // Items go back in stock
       await client.query(
         `UPDATE products
          SET stock = products.stock + oi.quantity
          FROM order_items oi
          WHERE oi.order_id = $1 AND products.id = oi.product_id`,
+        [order.id]
+      );
+      // A paid order needs a refund; an unpaid one is simply closed
+      await client.query(
+        `UPDATE payments
+         SET status = CASE WHEN status = 'paid' THEN 'refund_due'
+                           WHEN status = 'pending' THEN 'cancelled'
+                           ELSE status END
+         WHERE order_id = $1`,
         [order.id]
       );
     }
