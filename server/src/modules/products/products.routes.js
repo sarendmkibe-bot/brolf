@@ -20,9 +20,18 @@ const productSchema = z.object({
   name: z.string().trim().min(2).max(200),
   description: z.string().trim().max(5000).optional(),
   price: z.coerce.number().min(0).max(10000000),
+  // The "was" price shown crossed out next to the real price (optional)
+  original_price: z.coerce.number().min(0).max(10000000).nullable().optional(),
   stock: z.coerce.number().int().min(0).max(1000000),
   category_id: z.coerce.number().int().positive().nullable().optional(),
-  image_url: z.string().trim().url().max(2000).optional(),
+  image_url: z
+    .string()
+    .trim()
+    .max(2000)
+    .refine((v) => /^https?:\/\//i.test(v) || /^\/(products|uploads)\/[\w.-]+$/.test(v), {
+      message: 'Use a full https link or a /products/ file path',
+    })
+    .optional(),
 });
 
 const updateSchema = productSchema
@@ -33,10 +42,20 @@ const updateSchema = productSchema
   });
 
 const PRODUCT_COLUMNS = `
-  p.id, p.name, p.description, p.price::float8 AS price, p.stock,
+  p.id, p.name, p.description, p.price::float8 AS price,
+  p.original_price::float8 AS original_price, p.stock,
   p.image_url, p.is_active, p.category_id,
   c.name AS category_name, u.name AS seller_name, p.seller_id
 `;
+
+const RETURNING = `RETURNING id, name, description, price::float8 AS price,
+  original_price::float8 AS original_price, stock, image_url, category_id, is_active`;
+
+const priceError = (res) =>
+  res.status(400).json({
+    error: 'Invalid input',
+    details: { original_price: ['Must be higher than the price'] },
+  });
 
 // Public: list active products with search, filters and pagination
 router.get('/', async (req, res, next) => {
@@ -154,12 +173,26 @@ router.post('/', requireAuth, requireRole('seller', 'admin'), async (req, res, n
       });
     }
 
-    const { name, description, price, stock, category_id, image_url } = parsed.data;
+    const { name, description, price, original_price, stock, category_id, image_url } = parsed.data;
+    if (original_price != null && original_price <= price) {
+      return priceError(res);
+    }
+
     const result = await pool.query(
-      `INSERT INTO products (seller_id, category_id, name, description, price, stock, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, name, description, price::float8 AS price, stock, image_url, category_id, is_active`,
-      [req.user.id, category_id ?? null, name, description ?? null, price, stock, image_url ?? null]
+      `INSERT INTO products
+         (seller_id, category_id, name, description, price, original_price, stock, image_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ${RETURNING}`,
+      [
+        req.user.id,
+        category_id ?? null,
+        name,
+        description ?? null,
+        price,
+        original_price ?? null,
+        stock,
+        image_url ?? null,
+      ]
     );
 
     res.status(201).json({ product: result.rows[0] });
@@ -207,6 +240,11 @@ router.put('/:id', requireAuth, requireRole('seller', 'admin'), async (req, res,
       });
     }
 
+    const { price, original_price } = parsed.data;
+    if (price != null && original_price != null && original_price <= price) {
+      return priceError(res);
+    }
+
     // Column names come from the validated schema, never directly from the request
     const sets = [];
     const values = [];
@@ -218,7 +256,7 @@ router.put('/:id', requireAuth, requireRole('seller', 'admin'), async (req, res,
 
     const result = await pool.query(
       `UPDATE products SET ${sets.join(', ')} WHERE id = $${values.length}
-       RETURNING id, name, description, price::float8 AS price, stock, image_url, category_id, is_active`,
+       ${RETURNING}`,
       values
     );
 

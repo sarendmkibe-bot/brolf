@@ -13,8 +13,8 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState('overview');
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold">Admin dashboard</h1>
+  <div>
+      <h1 className="text-4xl font-bold text-white hover:text-green-300">Admin dashboard</h1>
 
       <div className="mt-4 flex gap-2">
         {TABS.map((t) => (
@@ -31,7 +31,8 @@ export default function AdminDashboard() {
       </div>
 
       <div className="mt-6">
-        {tab === 'overview' && <AdminOverview />}
+      {tab === 'overview' && (
+       <AdminOverview onViewAllOrders={() => setTab('orders')} />)}
         {tab === 'users' && <AdminUsers />}
         {tab === 'orders' && <AdminOrders />}
       </div>

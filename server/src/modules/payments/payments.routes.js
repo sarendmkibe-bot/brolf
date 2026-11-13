@@ -16,6 +16,7 @@ router.post('/verify', requireAuth, requireRole('customer'), async (req, res, ne
     return res.status(400).json({ error: 'Invalid input' });
   }
   const txRef = parsed.data.tx_ref;
+  console.log('VERIFY called with tx_ref:', txRef);
 
   try {
     const found = await pool.query(
@@ -25,6 +26,7 @@ router.post('/verify', requireAuth, requireRole('customer'), async (req, res, ne
       [txRef, req.user.id]
     );
     const payment = found.rows[0];
+    console.log('Payment row in database:', payment);
     if (!payment) {
       return res.status(404).json({ error: 'Payment not found' });
     }
@@ -35,6 +37,7 @@ router.post('/verify', requireAuth, requireRole('customer'), async (req, res, ne
     let result;
     try {
       result = await verifyPayment(txRef);
+      console.log('Chapa says:', result);
     } catch (err) {
       console.error(err);
       if (err.fromProvider) {

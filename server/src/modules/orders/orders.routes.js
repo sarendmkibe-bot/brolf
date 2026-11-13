@@ -16,6 +16,25 @@ class HttpError extends Error {
 
 const idSchema = z.coerce.number().int().positive();
 
+const REGIONS = [
+  'Addis Ababa', 'Afar', 'Amhara', 'Benishangul-Gumuz', 'Dire Dawa', 'Gambela', 'Harari',
+  'Oromia', 'Sidama', 'Somali', 'South Ethiopia', 'South West Ethiopia', 'Tigray',
+];
+
+// Keep in sync with Checkout.jsx. The server's number is the one that is charged.
+const shippingFee = (region, subtotal) =>
+  subtotal >= 2000 ? 0 : region === 'Addis Ababa' ? 80 : 150;
+
+const shippingSchema = z.object({
+  name: z.string().trim().min(2).max(100),
+  phone: z.string().trim().regex(/^[79]\d{8}$/, 'Enter 9 digits, for example 912864228'),
+  street: z.string().trim().min(2).max(200),
+  unit: z.string().trim().max(100).default(''),
+  region: z.enum(REGIONS),
+  city: z.string().trim().min(2).max(100),
+  zip: z.string().trim().max(20).default(''),
+});
+
 const createOrderSchema = z.object({
   items: z
     .array(
@@ -26,6 +45,8 @@ const createOrderSchema = z.object({
     )
     .min(1)
     .max(50),
+  payment_method: z.enum(['online', 'cod']),
+  shipping: shippingSchema,
 });
 
 const statusSchema = z.object({
@@ -64,6 +85,7 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
       details: parsed.error.flatten().fieldErrors,
     });
   }
+  const { shipping } = parsed.data;
 
   // Merge duplicate products and sort ids so concurrent orders lock rows in the same order
   const wanted = new Map();
@@ -72,10 +94,12 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
   }
   const ids = [...wanted.keys()].sort((a, b) => a - b);
 
-  const mode = paymentMode();
+  // "online" uses your PAYMENT_MODE (chapa or simulated); "cod" is always cash on delivery
+  const mode = parsed.data.payment_method === 'cod' ? 'cod' : paymentMode();
   const txRef = mode === 'chapa' ? newTxRef() : null;
   let order;
   let total;
+  let fee;
 
   const client = await pool.connect();
   try {
@@ -102,13 +126,28 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
       }
       totalCents += Math.round(Number(product.price) * 100) * qty;
     }
-    total = totalCents / 100;
+    fee = shippingFee(shipping.region, totalCents / 100);
+    total = (totalCents + fee * 100) / 100;
 
     const orderResult = await client.query(
-      `INSERT INTO orders (customer_id, total, status)
-       VALUES ($1, $2, $3)
+      `INSERT INTO orders
+         (customer_id, total, status, shipping_fee, shipping_name, shipping_phone,
+          shipping_street, shipping_unit, shipping_region, shipping_city, shipping_zip)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id, status, created_at`,
-      [req.user.id, total, mode === 'chapa' ? 'awaiting_payment' : 'pending']
+      [
+        req.user.id,
+        total,
+        mode === 'chapa' ? 'awaiting_payment' : 'pending',
+        fee,
+        shipping.name,
+        shipping.phone,
+        shipping.street,
+        shipping.unit,
+        shipping.region,
+        shipping.city,
+        shipping.zip,
+      ]
     );
     order = orderResult.rows[0];
 
@@ -123,10 +162,11 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
     }
 
     // No card or mobile-money details are ever stored, only a reference
+    const payStatus = { chapa: 'pending', cod: 'cod', simulated: 'simulated' }[mode];
     await client.query(
       `INSERT INTO payments (order_id, amount, method, status, tx_ref)
        VALUES ($1, $2, $3, $4, $5)`,
-      [order.id, total, mode, mode === 'chapa' ? 'pending' : 'simulated', txRef]
+      [order.id, total, mode, payStatus, txRef]
     );
 
     await client.query('COMMIT');
@@ -140,12 +180,19 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
     client.release();
   }
 
-  const orderJson = { id: order.id, status: order.status, total, created_at: order.created_at };
+  const orderJson = {
+    id: order.id,
+    status: order.status,
+    total,
+    shipping_fee: fee,
+    created_at: order.created_at,
+  };
 
-  if (mode === 'simulated') {
-    return res
-      .status(201)
-      .json({ order: orderJson, payment: { method: 'simulated', status: 'simulated' } });
+  if (mode !== 'chapa') {
+    return res.status(201).json({
+      order: orderJson,
+      payment: { method: mode, status: mode === 'cod' ? 'cod' : 'simulated' },
+    });
   }
 
   // Real payments: start the transaction with Chapa and hand back the payment page
@@ -167,7 +214,7 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
       payment: { method: 'chapa', status: 'pending', tx_ref: txRef, checkout_url: checkoutUrl },
     });
   } catch (err) {
-    console.error(err);
+    console.error(err); // Chapa's real error message is printed here
     await cancelAwaitingOrder(order.id, 'failed').catch(console.error);
     res.status(502).json({ error: 'The payment provider is unavailable. Please try again.' });
   }
@@ -177,7 +224,8 @@ router.post('/', requireAuth, requireRole('customer'), async (req, res, next) =>
 router.get('/', requireAuth, requireRole('customer'), async (req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT o.id, o.status, o.total::float8 AS total, o.created_at, ${ITEMS_JSON}, ${PAYMENT_JSON}
+      `SELECT o.id, o.status, o.total::float8 AS total, o.shipping_fee::float8 AS shipping_fee,
+              o.shipping_city, o.shipping_region, o.created_at, ${ITEMS_JSON}, ${PAYMENT_JSON}
        FROM orders o
        JOIN order_items oi ON oi.order_id = o.id
        JOIN products p ON p.id = oi.product_id
@@ -196,7 +244,9 @@ router.get('/', requireAuth, requireRole('customer'), async (req, res, next) => 
 router.get('/seller', requireAuth, requireRole('seller'), async (req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT o.id, o.status, o.created_at, u.name AS customer_name, ${ITEMS_JSON},
+      `SELECT o.id, o.status, o.created_at, u.name AS customer_name,
+              o.shipping_name, o.shipping_phone, o.shipping_street, o.shipping_unit,
+              o.shipping_city, o.shipping_region, ${ITEMS_JSON},
               SUM(oi.quantity * oi.unit_price)::float8 AS seller_total
        FROM orders o
        JOIN order_items oi ON oi.order_id = o.id
@@ -242,9 +292,16 @@ router.patch('/:id/status', requireAuth, async (req, res, next) => {
     if (role === 'customer') {
       if (order.customer_id !== userId) throw new HttpError(404, 'Order not found');
       if (newStatus !== 'cancelled') throw new HttpError(403, 'Customers can only cancel orders');
-      // With real money a paid order is cancelled by the seller or admin, who also handle the refund
-      const cancellable = paymentMode() === 'chapa' ? ['awaiting_payment'] : ['pending'];
-      if (!cancellable.includes(order.status)) {
+      const pay = (
+        await client.query(
+          'SELECT method FROM payments WHERE order_id = $1 ORDER BY id DESC LIMIT 1',
+          [order.id]
+        )
+      ).rows[0];
+      const unpaidOnline = order.status === 'awaiting_payment';
+      const notYetConfirmed =
+        order.status === 'pending' && pay && ['cod', 'simulated'].includes(pay.method);
+      if (!unpaidOnline && !notYetConfirmed) {
         throw new HttpError(409, 'This order can no longer be cancelled');
       }
     } else if (role === 'seller') {
@@ -276,9 +333,17 @@ router.patch('/:id/status', requireAuth, async (req, res, next) => {
       await client.query(
         `UPDATE payments
          SET status = CASE WHEN status = 'paid' THEN 'refund_due'
-                           WHEN status = 'pending' THEN 'cancelled'
+                           WHEN status IN ('pending', 'cod') THEN 'cancelled'
                            ELSE status END
          WHERE order_id = $1`,
+        [order.id]
+      );
+    }
+
+    // Cash on delivery: the money is collected when the order is delivered
+    if (newStatus === 'delivered') {
+      await client.query(
+        "UPDATE payments SET status = 'paid', paid_at = NOW() WHERE order_id = $1 AND status = 'cod'",
         [order.id]
       );
     }

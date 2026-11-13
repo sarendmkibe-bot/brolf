@@ -9,7 +9,8 @@ import orderRoutes from './modules/orders/orders.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import paymentRoutes from './modules/payments/payments.routes.js';
 import { paymentMode } from './modules/payments/chapa.js';
-
+import aiRoutes from './ai/ai.routes.js';
+import uploadRoutes, { UPLOAD_DIR } from './modules/uploads/uploads.routes.js';
 const app = express();
 
 app.use(helmet());
@@ -21,6 +22,9 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/uploads', uploadRoutes);
+app.use('/uploads', express.static(UPLOAD_DIR, { index: false, dotfiles: 'ignore', maxAge: '7d' }));
 
 app.get('/api/health', (req, res) => {
   res.json({

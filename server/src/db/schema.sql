@@ -59,6 +59,7 @@ CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_seller ON order_items(seller_id);
+
 -- Real payments (Chapa)
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS tx_ref VARCHAR(100);
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS checkout_url TEXT;
@@ -68,3 +69,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_tx_ref ON payments(tx_ref) WHERE 
 ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
 ALTER TABLE orders ADD CONSTRAINT orders_status_check
   CHECK (status IN ('awaiting_payment', 'pending', 'confirmed', 'shipped', 'delivered', 'cancelled'));
+ALTER TABLE products ADD COLUMN IF NOT EXISTS original_price NUMERIC(10, 2) CHECK (original_price >= 0);
+
+-- Shipping details and fee (new)
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee NUMERIC(12, 2) NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_name TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_phone TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_street TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_unit TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_region TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_zip TEXT;

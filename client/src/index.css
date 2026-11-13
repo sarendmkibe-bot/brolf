@@ -17,3 +17,78 @@ body {
   color: var(--color-fg);
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
+
+
+
+/* Full-screen MarketHub dashboard background */
+.dashboard-background {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: calc(100vh - 64px);
+  width: 100%;
+}
+
+/* Background image covers the entire browser */
+.dashboard-background::before {
+  content: "";
+  position: fixed;
+  inset: 64px 0 0;
+  z-index: -1;
+  pointer-events: none;
+
+  background-image:
+    linear-gradient(
+      rgba(5, 12, 10, 0.35),
+      rgba(5, 12, 10, 0.55)
+    ),
+    url('/images/dashboard-bg.jfif');
+
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.home-background {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: calc(100vh - 64px);
+  width: 100%;
+}
+
+.home-background::before {
+  content: "";
+  position: fixed;
+  inset: 64px 0 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(
+      rgba(5, 12, 10, 0.35),
+      rgba(5, 12, 10, 0.55)
+    ),
+    url('/images/home2-bg.jfif');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.card-in {
+  animation: slide-in 0.5s ease-out backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-in {
+    animation: none;
+  }
+}

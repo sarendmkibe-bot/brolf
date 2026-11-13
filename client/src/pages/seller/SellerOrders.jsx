@@ -49,7 +49,7 @@ export default function SellerOrders() {
 
       <div className="space-y-4">
         {orders.map((o) => (
-          <div key={o.id} className="rounded-xl border border-line bg-panel p-5">
+          <div key={o.id} className="rounded-xl border border-line bg-panel/80 backdrop-blur-sm p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="font-semibold">

@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { api, errorText } from '../../api.js';
 
-const EMPTY = { name: '', description: '', price: '', stock: '', category_id: '', image_url: '' };
+const EMPTY = {
+  name: '',
+  description: '',
+  price: '',
+  original_price: '',
+  stock: '',
+  category_id: '',
+  image_url: '',
+};
 const input =
   'w-full rounded-lg border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-brand';
 
@@ -40,6 +48,8 @@ export default function SellerProducts() {
       description: form.description,
       price: Number(form.price),
       stock: Number(form.stock),
+      // An empty box removes the old price (and the discount)
+      original_price: form.original_price === '' ? null : Number(form.original_price),
     };
     if (form.category_id) body.category_id = Number(form.category_id);
     if (form.image_url.trim()) body.image_url = form.image_url.trim();
@@ -69,6 +79,7 @@ export default function SellerProducts() {
       name: p.name,
       description: p.description || '',
       price: String(p.price),
+      original_price: p.original_price ? String(p.original_price) : '',
       stock: String(p.stock),
       category_id: p.category_id ? String(p.category_id) : '',
       image_url: p.image_url || '',
@@ -121,6 +132,15 @@ export default function SellerProducts() {
             className={input}
           />
           <input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="Old price (optional, shows a discount)"
+            value={form.original_price}
+            onChange={update('original_price')}
+            className={input}
+          />
+          <input
             required
             type="number"
             min="0"
@@ -131,11 +151,11 @@ export default function SellerProducts() {
             className={input}
           />
           <input
-            type="url"
-            placeholder="Image URL (optional)"
+            type="text"
+            placeholder="Photo: https link or /products/file.jpg (optional)"
             value={form.image_url}
             onChange={update('image_url')}
-            className={`${input} sm:col-span-2`}
+            className={input}
           />
           <textarea
             rows="3"
@@ -180,6 +200,9 @@ export default function SellerProducts() {
               <p className="font-semibold">{p.name}</p>
               <p className="text-sm text-muted">
                 {p.category_name || 'Uncategorized'} · {p.price} ETB
+                {p.original_price > p.price && (
+                  <span className="ml-2 line-through">{p.original_price} ETB</span>
+                )}
               </p>
               <div className="mt-1 flex gap-2 text-xs">
                 <span className={p.is_active ? 'text-brand' : 'text-red-400'}>

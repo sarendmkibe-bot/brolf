@@ -15,6 +15,24 @@ const { expireUnpaidOrders } = await import('../src/modules/payments/service.js'
 const PASSWORD = 'Password123';
 const auth = (user) => ({ Authorization: `Bearer ${user.token}` });
 
+// A valid delivery address; individual tests change parts of it
+const ADDRESS = {
+  name: 'Test Customer',
+  phone: '912864228',
+  street: 'Bole Road',
+  unit: '',
+  region: 'Addis Ababa',
+  city: 'Addis Ababa',
+  zip: '',
+};
+
+function placeOrder(user, items, { method = 'online', shipping = {} } = {}) {
+  return request(app)
+    .post('/api/orders')
+    .set(auth(user))
+    .send({ items, payment_method: method, shipping: { ...ADDRESS, ...shipping } });
+}
+
 async function signup(name, email, role = 'customer') {
   const res = await request(app)
     .post('/api/auth/register')
@@ -25,6 +43,8 @@ async function signup(name, email, role = 'customer') {
 
 let customer, seller, otherSeller, admin;
 let productId, order1Id;
+
+const coffee = (quantity) => [{ product_id: productId, quantity }];
 
 async function stockOf() {
   const res = await request(app).get(`/api/products/${productId}`);
@@ -145,32 +165,40 @@ test('products can be searched without logging in', async () => {
 
 // ---------- Orders ----------
 
-test('placing an order reduces stock and records a simulated payment', async () => {
-  const res = await request(app)
-    .post('/api/orders')
-    .set(auth(customer))
-    .send({ items: [{ product_id: productId, quantity: 2 }] });
+test('placing an order reduces stock and adds the shipping fee', async () => {
+  const res = await placeOrder(customer, coffee(2));
   assert.equal(res.status, 201);
-  assert.equal(res.body.order.total, 1700);
+  assert.equal(res.body.order.shipping_fee, 80); // Addis Ababa, items under 2000 ETB
+  assert.equal(res.body.order.total, 1780); // 2 x 850 + 80
   assert.equal(res.body.payment.method, 'simulated');
   order1Id = res.body.order.id;
   assert.equal(await stockOf(), 8);
 });
 
-test('ordering more than the stock is rejected and changes nothing', async () => {
-  const res = await request(app)
+test('an order without a valid address is rejected and changes nothing', async () => {
+  const noAddress = await request(app)
     .post('/api/orders')
     .set(auth(customer))
-    .send({ items: [{ product_id: productId, quantity: 50 }] });
+    .send({ items: coffee(1), payment_method: 'online' });
+  assert.equal(noAddress.status, 400);
+
+  const badPhone = await placeOrder(customer, coffee(1), { shipping: { phone: '12345' } });
+  assert.equal(badPhone.status, 400);
+
+  const badRegion = await placeOrder(customer, coffee(1), { shipping: { region: 'Atlantis' } });
+  assert.equal(badRegion.status, 400);
+
+  assert.equal(await stockOf(), 8);
+});
+
+test('ordering more than the stock is rejected and changes nothing', async () => {
+  const res = await placeOrder(customer, coffee(50));
   assert.equal(res.status, 409);
   assert.equal(await stockOf(), 8);
 });
 
 test('a seller cannot place orders', async () => {
-  const res = await request(app)
-    .post('/api/orders')
-    .set(auth(seller))
-    .send({ items: [{ product_id: productId, quantity: 1 }] });
+  const res = await placeOrder(seller, coffee(1));
   assert.equal(res.status, 403);
 });
 
@@ -192,10 +220,7 @@ test('a customer cannot mark an order as shipped', async () => {
 });
 
 test('cancelling a pending order puts the stock back', async () => {
-  const placed = await request(app)
-    .post('/api/orders')
-    .set(auth(customer))
-    .send({ items: [{ product_id: productId, quantity: 3 }] });
+  const placed = await placeOrder(customer, coffee(3));
   assert.equal(placed.status, 201);
   assert.equal(await stockOf(), 5);
 
@@ -238,7 +263,7 @@ test('the sales report is admin only', async () => {
   const ok = await request(app).get('/api/admin/reports/sales').set(auth(admin));
   assert.equal(ok.status, 200);
   assert.equal(ok.body.totals.orders, 1); // the cancelled order is not counted
-  assert.equal(ok.body.totals.revenue, 1700);
+  assert.equal(ok.body.totals.revenue, 1780);
 });
 
 test('a disabled account is locked out immediately', async () => {
@@ -250,6 +275,48 @@ test('a disabled account is locked out immediately', async () => {
 
   const res = await request(app).get('/api/auth/me').set(auth(otherSeller));
   assert.equal(res.status, 401);
+});
+
+// ---------- Restocking, shipping fees and cash on delivery ----------
+
+test('a seller can restock a product', async () => {
+  const res = await request(app)
+    .put(`/api/products/${productId}`)
+    .set(auth(seller))
+    .send({ stock: 50 });
+  assert.equal(res.status, 200);
+  assert.equal(await stockOf(), 50);
+});
+
+test('shipping is 80 ETB in Addis Ababa, 150 ETB elsewhere and free from 2000 ETB', async () => {
+  const oromia = { region: 'Oromia', city: 'Adama' };
+
+  const addis = await placeOrder(customer, coffee(1));
+  assert.equal(addis.status, 201);
+  assert.equal(addis.body.order.shipping_fee, 80);
+  assert.equal(addis.body.order.total, 930);
+
+  const elsewhere = await placeOrder(customer, coffee(1), { shipping: oromia });
+  assert.equal(elsewhere.status, 201);
+  assert.equal(elsewhere.body.order.shipping_fee, 150);
+  assert.equal(elsewhere.body.order.total, 1000);
+
+  const free = await placeOrder(customer, coffee(3), { shipping: oromia });
+  assert.equal(free.status, 201);
+  assert.equal(free.body.order.shipping_fee, 0); // 3 x 850 = 2550, over 2000
+  assert.equal(free.body.order.total, 2550);
+});
+
+test('cash on delivery creates a pending order with a cod payment', async () => {
+  const before = await stockOf();
+  const res = await placeOrder(customer, coffee(1), { method: 'cod' });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.order.status, 'pending');
+  assert.equal(res.body.payment.method, 'cod');
+  assert.equal(await stockOf(), before - 1);
+
+  const sellerView = await request(app).get('/api/orders/seller').set(auth(seller));
+  assert.ok(sellerView.body.orders.some((o) => o.id === res.body.order.id));
 });
 
 // ---------- Real payments (Chapa is mocked, no network) ----------
@@ -291,12 +358,10 @@ test('with real payments on, an order waits for payment until it is verified', a
   const restore = mockChapa('success');
   try {
     const before = await stockOf();
-    const placed = await request(app)
-      .post('/api/orders')
-      .set(auth(customer))
-      .send({ items: [{ product_id: productId, quantity: 1 }] });
+    const placed = await placeOrder(customer, coffee(1));
     assert.equal(placed.status, 201);
     assert.equal(placed.body.order.status, 'awaiting_payment');
+    assert.equal(placed.body.order.total, 930);
     assert.equal(placed.body.payment.method, 'chapa');
     assert.ok(placed.body.payment.checkout_url);
     assert.equal(await stockOf(), before - 1);
@@ -325,10 +390,7 @@ test('an unpaid order expires and its stock is returned', async () => {
   const restore = mockChapa('pending');
   try {
     const before = await stockOf();
-    const placed = await request(app)
-      .post('/api/orders')
-      .set(auth(customer))
-      .send({ items: [{ product_id: productId, quantity: 2 }] });
+    const placed = await placeOrder(customer, coffee(2));
     assert.equal(placed.status, 201);
     assert.equal(await stockOf(), before - 2);
 
@@ -346,4 +408,52 @@ test('an unpaid order expires and its stock is returned', async () => {
   } finally {
     restore();
   }
+});
+
+// ---------- Photo uploads ----------
+
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+test('only sellers can upload photos, and only real images are accepted', async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { UPLOAD_DIR } = await import('../src/modules/uploads/uploads.routes.js');
+
+  const noLogin = await request(app)
+    .post('/api/uploads')
+    .attach('image', TINY_PNG, { filename: 'a.png', contentType: 'image/png' });
+  assert.equal(noLogin.status, 401);
+
+  const asCustomer = await request(app)
+    .post('/api/uploads')
+    .set(auth(customer))
+    .attach('image', TINY_PNG, { filename: 'a.png', contentType: 'image/png' });
+  assert.equal(asCustomer.status, 403);
+
+  // A text file pretending to be a picture is rejected
+  const fake = await request(app)
+    .post('/api/uploads')
+    .set(auth(seller))
+    .attach('image', Buffer.from('this is not an image at all'), {
+      filename: 'fake.png',
+      contentType: 'image/png',
+    });
+  assert.equal(fake.status, 400);
+
+  const ok = await request(app)
+    .post('/api/uploads')
+    .set(auth(seller))
+    .attach('image', TINY_PNG, { filename: 'photo.png', contentType: 'image/png' });
+  assert.equal(ok.status, 201);
+  assert.match(ok.body.url, /^\/uploads\/[a-f0-9]{24}\.png$/);
+
+  // The stored photo can be fetched back
+  const served = await request(app).get(ok.body.url);
+  assert.equal(served.status, 200);
+  assert.match(served.headers['content-type'], /image\/png/);
+
+  await fs.unlink(path.join(UPLOAD_DIR, path.basename(ok.body.url)));
 });

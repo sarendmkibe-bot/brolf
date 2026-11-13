@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import ProductCard from '../components/ProductCard.jsx';
+import ProductRow from '../components/ProductRow.jsx';
 
 const LIMIT = 12;
 
 export default function Home() {
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
+  const [deals, setDeals] = useState([]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);
@@ -17,6 +19,15 @@ export default function Home() {
   useEffect(() => {
     api('/categories')
       .then((d) => setCategories(d.categories))
+      .catch(() => {});
+
+    // Products that have a crossed-out old price go into the "Today's deals" row
+    api('/products?limit=50')
+      .then((d) =>
+        setDeals(
+          d.products.filter((p) => p.original_price && p.original_price > p.price).slice(0, 10)
+        )
+      )
       .catch(() => {});
   }, []);
 
@@ -41,6 +52,7 @@ export default function Home() {
   }, [search, category, page]);
 
   const pages = Math.max(1, Math.ceil(total / LIMIT));
+  const browsing = !search.trim() && !category && page === 1;
 
   return (
     <div>
@@ -62,7 +74,9 @@ export default function Home() {
         />
       </section>
 
-      <div className="mt-6 flex flex-wrap gap-2">
+      {browsing && <ProductRow title="Today's deals" products={deals} />}
+
+      <div className="mt-8 flex flex-wrap gap-2">
         {[{ id: '', name: 'All' }, ...categories].map((c) => (
           <button
             key={c.id}
@@ -87,9 +101,12 @@ export default function Home() {
         <p className="mt-6 text-muted">No products found.</p>
       )}
 
-      <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {products.map((p) => (
-          <ProductCard key={p.id} product={p} />
+      <div
+        key={products.map((p) => p.id).join('-')}
+        className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+      >
+        {products.map((p, i) => (
+          <ProductCard key={p.id} product={p} index={i} />
         ))}
       </div>
 

@@ -3,6 +3,9 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
 import { useCart } from '../CartContext.jsx';
+import ProductImage from '../components/ProductImage.jsx';
+import PriceTag from '../components/PriceTag.jsx';
+import RelatedProducts from '../components/RelatedProducts.jsx';
 
 export default function ProductDetail() {
   const { id } = useParams();
@@ -15,6 +18,7 @@ export default function ProductDetail() {
 
   useEffect(() => {
     setAdded(false);
+    window.scrollTo({ top: 0 });
     api(`/products/${id}`)
       .then((d) => {
         setProduct(d.product);
@@ -42,13 +46,12 @@ export default function ProductDetail() {
       </Link>
 
       <div className="mt-4 grid gap-8 md:grid-cols-2">
-        {product.image_url ? (
-          <img src={product.image_url} alt={product.name} className="h-80 w-full rounded-2xl object-cover" />
-        ) : (
-          <div className="flex h-80 items-center justify-center rounded-2xl bg-gradient-to-br from-panel2 to-ink text-7xl font-bold text-brand/40">
-            {product.name.charAt(0)}
-          </div>
-        )}
+        <ProductImage
+          key={product.id}
+          product={product}
+          className="h-80 w-full rounded-2xl"
+          iconClass="text-8xl"
+        />
 
         <div>
           <p className="text-xs uppercase tracking-wide text-muted">
@@ -56,7 +59,16 @@ export default function ProductDetail() {
           </p>
           <h1 className="mt-1 text-3xl font-bold">{product.name}</h1>
           <p className="mt-1 text-sm text-muted">Sold by {product.seller_name}</p>
-          <p className="mt-4 text-3xl font-bold text-brand">{product.price} ETB</p>
+
+          <div className="mt-4">
+            <PriceTag
+              price={product.price}
+              original={product.original_price}
+              size="text-3xl"
+              showBadge
+            />
+          </div>
+
           <p className="mt-4 whitespace-pre-line text-muted">
             {product.description || 'No description yet.'}
           </p>
@@ -101,6 +113,8 @@ export default function ProductDetail() {
           )}
         </div>
       </div>
+
+      <RelatedProducts product={product} />
     </div>
   );
 }
